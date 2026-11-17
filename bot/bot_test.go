@@ -2,6 +2,7 @@ package bot
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -249,4 +250,33 @@ func TestSendFileViaEmailRefusesPlaintext(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("SMTP server did not shut down cleanly")
 	}
+}
+
+func TestRunConvertInjected(t *testing.T) {
+	t.Run("injected error", func(t *testing.T) {
+		var gotOut string
+		b := &SendToKindleBot{
+			convert: func(in, out string) error {
+				gotOut = out
+				return errors.New("boom")
+			},
+		}
+
+		if err := b.runConvert("/in.pdf", "/out.epub"); err == nil || err.Error() != "boom" {
+			t.Fatalf("runConvert() error = %v, want boom", err)
+		}
+		if gotOut != "/out.epub" {
+			t.Errorf("runConvert() out = %q, want %q", gotOut, "/out.epub")
+		}
+	})
+
+	t.Run("injected nil", func(t *testing.T) {
+		b := &SendToKindleBot{
+			convert: func(in, out string) error { return nil },
+		}
+
+		if err := b.runConvert("/in.pdf", "/out.epub"); err != nil {
+			t.Fatalf("runConvert() error = %v, want nil", err)
+		}
+	})
 }

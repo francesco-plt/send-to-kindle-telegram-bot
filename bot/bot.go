@@ -1,14 +1,17 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	mail "github.com/wneessen/go-mail"
@@ -44,6 +47,8 @@ type SendToKindleBot struct {
 	SMTPHost  string
 	SMTPPort  string
 	Password  string
+
+	convert func(in, out string) error
 }
 
 // Start starts bot. It is blocking.
@@ -62,7 +67,15 @@ func (b *SendToKindleBot) Start() error {
 	}
 
 	bot.Handle(tb.OnDocument, b.documentHandler(bot))
-	bot.Start()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go bot.Start()
+
+	<-ctx.Done()
+	slog.Info("shutting down")
+	bot.Stop()
 
 	return nil
 }
@@ -74,7 +87,7 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) tb.HandlerFunc {
 		fileNameWithoutExtension, extension := splitFileName(doc.FileName)
 
 		originalFilePath := tmpFilesPath + doc.FileName
-		if err := bot.Download(&doc.File, originalFilePath); err != nil {
+		if err := downloadWithTimeout(bot, &doc.File, originalFilePath, 60*time.Second); err != nil {
 			slog.Error("could not download file", "error", err)
 			respond(bot, msg, "Sorry. I could not download file")
 			return nil
@@ -85,7 +98,7 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) tb.HandlerFunc {
 		if needToConvert(extension) {
 			outputFilePath := tmpFilesPath + fileNameWithoutExtension + ".epub"
 			defer removeSilently(outputFilePath)
-			if err := convert(originalFilePath, outputFilePath); err != nil {
+			if err := b.runConvert(originalFilePath, outputFilePath); err != nil {
 				slog.Error("could not convert file", "error", err)
 				respond(bot, msg, "Sorry. I could not convert file")
 				return nil
@@ -121,6 +134,31 @@ func respond(bot *tb.Bot, m *tb.Message, text string) {
 	if _, err := bot.Send(m.Sender, text); err != nil {
 		slog.Error("could not send a message", "chat_id", m.Sender.ID, "error", err)
 	}
+}
+
+// downloadWithTimeout downloads a file with a timeout, since telebot's
+// Bot.Download has no context variant. On timeout it best-effort removes the
+// partial file so nothing incomplete is left behind.
+func downloadWithTimeout(bot *tb.Bot, file *tb.File, localPath string, timeout time.Duration) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- bot.Download(file, localPath)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(timeout):
+		_ = os.Remove(localPath)
+		return fmt.Errorf("download timed out after %s", timeout)
+	}
+}
+
+func (b *SendToKindleBot) runConvert(in, out string) error {
+	if b.convert != nil {
+		return b.convert(in, out)
+	}
+	return convert(in, out)
 }
 
 func convert(in, out string) error {
@@ -203,5 +241,8 @@ func (b *SendToKindleBot) sendFileViaEmail(path string) error {
 		return err
 	}
 
-	return client.DialAndSend(msg)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	return client.DialAndSendWithContext(ctx, msg)
 }
