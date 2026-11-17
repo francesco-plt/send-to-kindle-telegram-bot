@@ -1,10 +1,13 @@
 module github.com/michaelfmnk/send-to-kindle-telegram-bot
 
-go 1.17
+go 1.26.10
 
 require (
-	github.com/scorredoira/email v0.0.0-20191107070024-dc7b732c55da
-	gopkg.in/tucnak/telebot.v2 v2.4.1
+	github.com/wneessen/go-mail v0.8.2
+	gopkg.in/telebot.v3 v3.3.8
 )
 
-require github.com/pkg/errors v0.8.1 // indirect
+require (
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+)

@@ -1,12 +1,15 @@
 package main
 
 import (
-	"github.com/michaelfmnk/send-to-kindle-telegram-bot/bot"
-	"log"
+	"log/slog"
 	"os"
+
+	"github.com/michaelfmnk/send-to-kindle-telegram-bot/bot"
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+
 	unkindleBot := bot.SendToKindleBot{
 		Token:     os.Getenv("UBOT_TELEGRAM_TOKEN"),
 		EmailFrom: os.Getenv("UBOT_EMAIL_FROM"),
@@ -16,6 +19,7 @@ func main() {
 		Password:  os.Getenv("UBOT_PASSWORD"),
 	}
 	if err := unkindleBot.Start(); err != nil {
-		log.Fatal("could not start telegram bot", err)
+		slog.Error("could not start telegram bot", "error", err)
+		os.Exit(1)
 	}
 }
