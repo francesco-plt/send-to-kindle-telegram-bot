@@ -159,6 +159,13 @@ func (b *SendToKindleBot) verifyConfig() error {
 	return nil
 }
 
+// smtpUsesImplicitTLS reports whether the given SMTP port requires
+// implicit TLS (SSL). Port 465 is implicit TLS; all other ports use
+// mandatory STARTTLS. There is intentionally no plaintext path.
+func smtpUsesImplicitTLS(port string) bool {
+	return port == "465"
+}
+
 func (b *SendToKindleBot) sendFileViaEmail(path string) error {
 	msg := mail.NewMsg()
 	if err := msg.From(b.EmailFrom); err != nil {
@@ -185,7 +192,7 @@ func (b *SendToKindleBot) sendFileViaEmail(path string) error {
 	// TLS is mandatory: port 465 uses implicit TLS, everything else (587) uses
 	// STARTTLS. WithTLSPortPolicy(TLSMandatory) is STARTTLS-only, so implicit TLS
 	// on 465 needs WithSSL.
-	if port == mail.DefaultPortSSL {
+	if smtpUsesImplicitTLS(b.SMTPPort) {
 		opts = append(opts, mail.WithSSL())
 	} else {
 		opts = append(opts, mail.WithTLSPortPolicy(mail.TLSMandatory))

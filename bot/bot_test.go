@@ -131,3 +131,23 @@ func TestVerifyConfigDefaults(t *testing.T) {
 		t.Errorf("verifyConfig() SMTPPort = %q, want %q", b.SMTPPort, "587")
 	}
 }
+
+func TestSMTPUsesImplicitTLS(t *testing.T) {
+	tests := []struct {
+		port string
+		want bool
+	}{
+		{port: "465", want: true},  // implicit TLS
+		{port: "587", want: false}, // STARTTLS
+		{port: "25", want: false},  // STARTTLS — no plaintext fallback exists
+		{port: "", want: false},    // empty defaults to 587 in verifyConfig, so STARTTLS
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.port, func(t *testing.T) {
+			if got := smtpUsesImplicitTLS(tt.port); got != tt.want {
+				t.Errorf("smtpUsesImplicitTLS(%q) = %v, want %v", tt.port, got, tt.want)
+			}
+		})
+	}
+}
