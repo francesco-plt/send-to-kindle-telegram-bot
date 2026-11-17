@@ -3,16 +3,16 @@ package bot
 import (
 	"errors"
 	"fmt"
-	"github.com/scorredoira/email"
-	tb "gopkg.in/tucnak/telebot.v2"
-	"log"
-	"net/mail"
-	"net/smtp"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	mail "github.com/wneessen/go-mail"
+	tb "gopkg.in/telebot.v3"
 )
 
 const (
@@ -67,16 +67,17 @@ func (b *SendToKindleBot) Start() error {
 	return nil
 }
 
-func (b *SendToKindleBot) documentHandler(bot *tb.Bot) func(msg *tb.Message) {
-	return func(msg *tb.Message) {
+func (b *SendToKindleBot) documentHandler(bot *tb.Bot) tb.HandlerFunc {
+	return func(c tb.Context) error {
+		msg := c.Message()
 		doc := msg.Document
 		fileNameWithoutExtension, extension := splitFileName(doc.FileName)
 
 		originalFilePath := tmpFilesPath + doc.FileName
 		if err := bot.Download(&doc.File, originalFilePath); err != nil {
-			log.Println("could not download file", err)
+			slog.Error("could not download file", "error", err)
 			respond(bot, msg, "Sorry. I could not download file")
-			return
+			return nil
 		}
 		defer removeSilently(originalFilePath)
 
@@ -85,18 +86,20 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) func(msg *tb.Message) {
 			outputFilePath := tmpFilesPath + fileNameWithoutExtension + ".epub"
 			defer removeSilently(outputFilePath)
 			if err := convert(originalFilePath, outputFilePath); err != nil {
-				log.Println("could not convert file", err)
+				slog.Error("could not convert file", "error", err)
 				respond(bot, msg, "Sorry. I could not convert file")
-				return
+				return nil
 			}
 			fileToSend = outputFilePath
 		}
 
 		if err := b.sendFileViaEmail(fileToSend); err != nil {
-			log.Println("could not send file", err)
+			slog.Error("could not send file", "error", err)
 			respond(bot, msg, "Sorry. I could not send file")
-			return
+			return nil
 		}
+
+		return nil
 	}
 }
 
@@ -116,7 +119,7 @@ func splitFileName(name string) (base, ext string) {
 
 func respond(bot *tb.Bot, m *tb.Message, text string) {
 	if _, err := bot.Send(m.Sender, text); err != nil {
-		log.Println(fmt.Sprintf("could not send a message to %d", m.Sender.ID), err)
+		slog.Error("could not send a message", "chat_id", m.Sender.ID, "error", err)
 	}
 }
 
@@ -133,7 +136,7 @@ func convert(in, out string) error {
 
 func removeSilently(path string) {
 	if err := os.Remove(path); err != nil {
-		log.Println(fmt.Sprintf("could not delete file %s", path), err)
+		slog.Error("could not delete file", "path", path, "error", err)
 	}
 }
 
@@ -157,18 +160,41 @@ func (b *SendToKindleBot) verifyConfig() error {
 }
 
 func (b *SendToKindleBot) sendFileViaEmail(path string) error {
-	msg := email.NewMessage("", "")
-	msg.From = mail.Address{Name: "From", Address: b.EmailFrom}
-	msg.To = []string{b.EmailTo}
+	msg := mail.NewMsg()
+	if err := msg.From(b.EmailFrom); err != nil {
+		return err
+	}
+	if err := msg.To(b.EmailTo); err != nil {
+		return err
+	}
+	msg.Subject("Send to Kindle")
+	msg.AttachFile(path)
 
-	if err := msg.Attach(path); err != nil {
+	port, err := strconv.Atoi(b.SMTPPort)
+	if err != nil {
+		return fmt.Errorf("invalid SMTP port %q: %w", b.SMTPPort, err)
+	}
+
+	opts := []mail.Option{
+		mail.WithPort(port),
+		mail.WithSMTPAuth(mail.SMTPAuthPlain),
+		mail.WithUsername(b.EmailFrom),
+		mail.WithPassword(b.Password),
+	}
+
+	// TLS is mandatory: port 465 uses implicit TLS, everything else (587) uses
+	// STARTTLS. WithTLSPortPolicy(TLSMandatory) is STARTTLS-only, so implicit TLS
+	// on 465 needs WithSSL.
+	if port == mail.DefaultPortSSL {
+		opts = append(opts, mail.WithSSL())
+	} else {
+		opts = append(opts, mail.WithTLSPortPolicy(mail.TLSMandatory))
+	}
+
+	client, err := mail.NewClient(b.SMTPHost, opts...)
+	if err != nil {
 		return err
 	}
 
-	auth := smtp.PlainAuth("", b.EmailFrom, b.Password, b.SMTPHost)
-	addr := fmt.Sprintf("%s:%s", b.SMTPHost, b.SMTPPort)
-	if err := email.Send(addr, auth, msg); err != nil {
-		return err
-	}
-	return nil
+	return client.DialAndSend(msg)
 }
