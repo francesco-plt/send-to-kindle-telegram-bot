@@ -83,13 +83,13 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) func(msg *tb.Message) {
 		fileToSend := originalFilePath
 		if needToConvert(extension) {
 			outputFilePath := tmpFilesPath + fileNameWithoutExtension + ".epub"
+			defer removeSilently(outputFilePath)
 			if err := convert(originalFilePath, outputFilePath); err != nil {
 				log.Println("could not convert file", err)
 				respond(bot, msg, "Sorry. I could not convert file")
 				return
 			}
 			fileToSend = outputFilePath
-			defer removeSilently(outputFilePath)
 		}
 
 		if err := b.sendFileViaEmail(fileToSend); err != nil {
