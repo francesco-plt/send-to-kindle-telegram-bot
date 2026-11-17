@@ -170,7 +170,7 @@ func TestSendFileViaEmailRefusesPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	serverDone := make(chan error, 1)
 	go func() {
@@ -179,7 +179,7 @@ func TestSendFileViaEmailRefusesPlaintext(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 			serverDone <- err
 			return
