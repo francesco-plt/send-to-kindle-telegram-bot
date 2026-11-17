@@ -1,24 +1,25 @@
-# TODO: refactor dockerfile
-FROM amd64/ubuntu
-COPY --from=golang:1.16.11-bullseye /usr/local/go/ /usr/local/go/
-ENV PATH="/usr/local/go/bin:${PATH}"
+# ---- Builder stage ----
+FROM golang:1.26 AS builder
 
-RUN go env -w GOPROXY=direct GOFLAGS="-insecure"
-ENV TZ=Europe/Minsk
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y git && \
-    apt-get install wget && \
-    apt-get install -y python
-RUN apt-get install -y ffmpeg libsm6 libxext6
-RUN wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh | sh /dev/stdin
-RUN mkdir -p files
-WORKDIR /app
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
 
 COPY . .
+RUN CGO_ENABLED=0 go build -o /out/bot .
 
-RUN go build
+# ---- Runtime stage ----
+FROM linuxserver/calibre:latest
 
-RUN chmod +x ./send-to-kindle-telegram-bot
-CMD ["./send-to-kindle-telegram-bot"]
+# Non-root user provided by the base image (abc).
+# Create a writable directory for downloaded/uploaded files.
+RUN mkdir -p /files && chown -R abc:abc /files
+
+COPY --from=builder /out/bot /usr/local/bin/bot
+
+WORKDIR /files
+
+USER abc
+
+CMD ["bot"]
