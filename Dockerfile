@@ -22,4 +22,4 @@ WORKDIR /files
 
 USER abc
 
-CMD ["bot"]
+ENTRYPOINT ["/usr/local/bin/bot"]
