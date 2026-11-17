@@ -1,6 +1,16 @@
 package bot
 
-import "testing"
+import (
+	"bufio"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestUnkindleBot_verifyConfig(t *testing.T) {
 	type fields struct {
@@ -149,5 +159,94 @@ func TestSMTPUsesImplicitTLS(t *testing.T) {
 				t.Errorf("smtpUsesImplicitTLS(%q) = %v, want %v", tt.port, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSendFileViaEmailRefusesPlaintext proves the "no plaintext fallback"
+// security property: when the SMTP server does not advertise STARTTLS, a
+// mandatory-TLS client must refuse to send rather than fall back to plaintext.
+func TestSendFileViaEmailRefusesPlaintext(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer ln.Close()
+
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer conn.Close()
+		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			serverDone <- err
+			return
+		}
+
+		// SMTP greeting.
+		if _, err := io.WriteString(conn, "220 localhost ESMTP\r\n"); err != nil {
+			serverDone <- err
+			return
+		}
+
+		br := bufio.NewReader(conn)
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				// go-mail closes the connection once it refuses to proceed
+				// without STARTTLS; EOF is the expected clean shutdown.
+				if err == io.EOF {
+					serverDone <- nil
+					return
+				}
+				serverDone <- err
+				return
+			}
+
+			upper := strings.ToUpper(strings.TrimSpace(line))
+			if strings.HasPrefix(upper, "EHLO") || strings.HasPrefix(upper, "HELO") {
+				// Advertise capabilities that do NOT include STARTTLS.
+				if _, err := io.WriteString(conn, "250-localhost\r\n250 SIZE 35882577\r\n"); err != nil {
+					serverDone <- err
+					return
+				}
+			}
+			// Otherwise keep draining until the client closes the connection.
+		}
+	}()
+
+	bot := &SendToKindleBot{
+		SMTPHost:  "127.0.0.1",
+		SMTPPort:  strconv.Itoa(ln.Addr().(*net.TCPAddr).Port),
+		EmailFrom: "from@example.com",
+		EmailTo:   "to@example.com",
+		Password:  "secret",
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "book.txt")
+	if err := os.WriteFile(tmpFile, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	err = bot.sendFileViaEmail(tmpFile)
+	if err == nil {
+		t.Fatal("sendFileViaEmail() error = nil, want error: server advertised no STARTTLS")
+	}
+	// The error must be the mandatory-STARTTLS refusal specifically, not some
+	// incidental failure (e.g. a missing AUTH capability). This is what makes
+	// the test sensitive to the "no plaintext fallback" property.
+	if !strings.Contains(err.Error(), "STARTTLS") {
+		t.Fatalf("sendFileViaEmail() error = %v, want a STARTTLS refusal", err)
+	}
+
+	select {
+	case serr := <-serverDone:
+		if serr != nil {
+			t.Fatalf("SMTP server: %v", serr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SMTP server did not shut down cleanly")
 	}
 }
