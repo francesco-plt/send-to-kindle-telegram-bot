@@ -2,8 +2,12 @@ package bot
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -248,5 +252,67 @@ func TestSendFileViaEmailRefusesPlaintext(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("SMTP server did not shut down cleanly")
+	}
+}
+
+func TestRunConvertInjected(t *testing.T) {
+	t.Run("injected error", func(t *testing.T) {
+		var gotOut string
+		b := &SendToKindleBot{
+			convert: func(in, out string) error {
+				gotOut = out
+				return errors.New("boom")
+			},
+		}
+
+		if err := b.runConvert("/in.pdf", "/out.epub"); err == nil || err.Error() != "boom" {
+			t.Fatalf("runConvert() error = %v, want boom", err)
+		}
+		if gotOut != "/out.epub" {
+			t.Errorf("runConvert() out = %q, want %q", gotOut, "/out.epub")
+		}
+	})
+
+	t.Run("injected nil", func(t *testing.T) {
+		b := &SendToKindleBot{
+			convert: func(in, out string) error { return nil },
+		}
+
+		if err := b.runConvert("/in.pdf", "/out.epub"); err != nil {
+			t.Fatalf("runConvert() error = %v, want nil", err)
+		}
+	})
+}
+
+func TestDownloadURLTimeout(t *testing.T) {
+	canceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Send a few bytes so the client has a partial file on disk when the
+		// timeout fires, then block until the client cancels the request.
+		_, _ = io.WriteString(w, "partial")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	out := filepath.Join(t.TempDir(), "out")
+	err := downloadURL(ctx, srv.URL, out)
+	if err == nil {
+		t.Fatal("downloadURL() error = nil, want context deadline exceeded")
+	}
+
+	// The partial file must be removed on failure.
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("downloadURL() left partial file on disk (stat err = %v), want it removed", statErr)
+	}
+
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not observe client cancellation")
 	}
 }

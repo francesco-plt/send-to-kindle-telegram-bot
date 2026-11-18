@@ -1,14 +1,19 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	mail "github.com/wneessen/go-mail"
@@ -44,6 +49,8 @@ type SendToKindleBot struct {
 	SMTPHost  string
 	SMTPPort  string
 	Password  string
+
+	convert func(in, out string) error
 }
 
 // Start starts bot. It is blocking.
@@ -62,7 +69,15 @@ func (b *SendToKindleBot) Start() error {
 	}
 
 	bot.Handle(tb.OnDocument, b.documentHandler(bot))
-	bot.Start()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go bot.Start()
+
+	<-ctx.Done()
+	slog.Info("shutting down")
+	bot.Stop()
 
 	return nil
 }
@@ -74,7 +89,9 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) tb.HandlerFunc {
 		fileNameWithoutExtension, extension := splitFileName(doc.FileName)
 
 		originalFilePath := tmpFilesPath + doc.FileName
-		if err := bot.Download(&doc.File, originalFilePath); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := b.downloadFile(ctx, bot, &doc.File, originalFilePath); err != nil {
 			slog.Error("could not download file", "error", err)
 			respond(bot, msg, "Sorry. I could not download file")
 			return nil
@@ -85,7 +102,7 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) tb.HandlerFunc {
 		if needToConvert(extension) {
 			outputFilePath := tmpFilesPath + fileNameWithoutExtension + ".epub"
 			defer removeSilently(outputFilePath)
-			if err := convert(originalFilePath, outputFilePath); err != nil {
+			if err := b.runConvert(originalFilePath, outputFilePath); err != nil {
 				slog.Error("could not convert file", "error", err)
 				respond(bot, msg, "Sorry. I could not convert file")
 				return nil
@@ -121,6 +138,58 @@ func respond(bot *tb.Bot, m *tb.Message, text string) {
 	if _, err := bot.Send(m.Sender, text); err != nil {
 		slog.Error("could not send a message", "chat_id", m.Sender.ID, "error", err)
 	}
+}
+
+// downloadFile downloads a Telegram file with a cancellable request. It
+// mirrors telebot's Bot.File/Bot.Download, which issue an http.NewRequest
+// with no context and therefore cannot be cancelled by a wrapper goroutine.
+func (b *SendToKindleBot) downloadFile(ctx context.Context, bot *tb.Bot, file *tb.File, localPath string) error {
+	f, err := bot.FileByID(file.FileID)
+	if err != nil {
+		return err
+	}
+	url := bot.URL + "/file/bot" + bot.Token + "/" + f.FilePath
+	file.FilePath = f.FilePath
+	return downloadURL(ctx, url, localPath)
+}
+
+// downloadURL fetches url into localPath using a context-aware request.
+func downloadURL(ctx context.Context, url, localPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telebot: expected status 200 but got %s", resp.Status)
+	}
+
+	out, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(out, resp.Body)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(localPath)
+	}
+	return err
+}
+
+func (b *SendToKindleBot) runConvert(in, out string) error {
+	if b.convert != nil {
+		return b.convert(in, out)
+	}
+	return convert(in, out)
 }
 
 func convert(in, out string) error {
@@ -203,5 +272,8 @@ func (b *SendToKindleBot) sendFileViaEmail(path string) error {
 		return err
 	}
 
-	return client.DialAndSend(msg)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	return client.DialAndSendWithContext(ctx, msg)
 }
