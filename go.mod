@@ -1,4 +1,4 @@
-module github.com/michaelfmnk/send-to-kindle-telegram-bot
+module github.com/francesco-plt/send-to-kindle-telegram-bot
 
 go 1.26.10
 

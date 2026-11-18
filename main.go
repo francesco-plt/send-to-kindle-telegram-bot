@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/michaelfmnk/send-to-kindle-telegram-bot/bot"
+	"github.com/francesco-plt/send-to-kindle-telegram-bot/bot"
 )
 
 func main() {
