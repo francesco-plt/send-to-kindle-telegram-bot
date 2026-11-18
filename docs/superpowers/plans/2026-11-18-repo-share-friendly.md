@@ -26,7 +26,7 @@
 The five input/failure classes most likely to bite a self-hoster, each pinned by a check in the owning task:
 
 1. **README env table incomplete/inaccurate** — must list all 7 canonical vars. Pin: `grep -c` each var name in README == 1 (task 1).
-2. **docker-compose missing a var or the volume** — must pass all vars, mount `./files:/files`, expose `PORT`. Pin: `docker compose config` or YAML parse + grep for each var and `/files` (task 1).
+2. **docker-compose missing a var or the volume** — must pass all vars, mount `files-data:/files`, expose `PORT`. Pin: `docker compose config` or YAML parse + grep for each var and `/files` (task 1).
 3. **Goreleaser config builds for a wrong arch/go** — Pin: `goreleaser check` (or YAML parse if goreleaser absent) and grep for `amd64`/`arm64` (task 2).
 4. **Release/coverage workflow breaks the existing `go.yml` matrix/lint** — Pin: preserve `checkout@v4`, `setup-go@v5`, matrix, `golangci-lint-action` keys; YAML parse (task 2).
 5. **Badges/links point at upstream `michaelfmnk` instead of the fork** — Pin: `grep -i michaelfmnk README.md` returns only the Dev.to line (task 1).
@@ -59,7 +59,7 @@ The five input/failure classes most likely to bite a self-hoster, each pinned by
 
 - [ ] **Step 4: Create issue forms + PR template** — `bug_report.yml` (fields: description, repro, expected, env, logs), `feature_request.yml` (problem, solution, alternatives), `PULL_REQUEST_TEMPLATE.md` (what/why/test checklist).
 
-- [ ] **Step 5: Create `docker-compose.yml`** — service `bot` with `build: .`, env for all 7 vars (with `${VAR}` placeholders), `ports: ["${PORT:-8080}:8080"]`, `volumes: ["./files:/files"]`, `restart: unless-stopped`.
+- [ ] **Step 5: Create `docker-compose.yml`** — service `bot` with `build: .`, env for all 7 vars (with `${VAR}` placeholders), `ports: ["${PORT:-8080}:${PORT:-8080}"]`, `volumes: ["files-data:/files"]` (named volume, so the non-root `abc` user can write) plus a top-level `volumes: { files-data: {} }`, `restart: unless-stopped`.
 
 - [ ] **Step 6: Verify** — `grep -ci michaelfmnk README.md` == 1 (dev.to only); `grep -c` each of the 7 env-var names in `README.md`; YAML-parse both issue forms and `docker-compose.yml`; `docker compose config` if the daemon is up (it is NOT on this machine — parse only).
 
@@ -90,7 +90,7 @@ The five input/failure classes most likely to bite a self-hoster, each pinned by
 **Files:**
 - Create: `.github/dependabot.yml`
 
-- [ ] **Step 1: Create `.github/dependabot.yml`** — `version: 2`; three `updates`: `gomod` (`directory: /`, weekly, `groups` for all deps), `docker` (`directory: /`, weekly), `github-actions` (`directory: /.github/workflows`, weekly). Target branch is the default (`master`) — do not set a `target-branch` key.
+- [ ] **Step 1: Create `.github/dependabot.yml`** — `version: 2`; three `updates`: `gomod` (`directory: /`, weekly, `groups` for all deps), `docker` (`directory: /`, weekly), `github-actions` (`directory: /`, weekly). Target branch is the default (`master`) — do not set a `target-branch` key.
 
 - [ ] **Step 2: Verify** — YAML-parse; confirm three `package-ecosystem` values (`gomod`, `docker`, `github-actions`).
 
