@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,6 +52,10 @@ type SendToKindleBot struct {
 	Password  string
 
 	convert func(in, out string) error
+
+	// lastPing stores time.Time.UnixNano() of the last successful Telegram
+	// ping; zero means "never pinged yet".
+	lastPing atomic.Int64
 }
 
 // Start starts bot. It is blocking.
@@ -74,6 +79,9 @@ func (b *SendToKindleBot) Start() error {
 	defer stop()
 
 	go bot.Start()
+
+	go b.heartbeat(ctx, bot)
+	go b.serveHealth(ctx)
 
 	<-ctx.Done()
 	slog.Info("shutting down")
