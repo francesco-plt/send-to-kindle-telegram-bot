@@ -6,7 +6,6 @@ Send documents to your Kindle straight from Telegram.
 [![codecov](https://codecov.io/gh/francesco-plt/send-to-kindle-telegram-bot/branch/master/graph/badge.svg)](https://codecov.io/gh/francesco-plt/send-to-kindle-telegram-bot)
 [![Release](https://github.com/francesco-plt/send-to-kindle-telegram-bot/actions/workflows/release.yml/badge.svg)](https://github.com/francesco-plt/send-to-kindle-telegram-bot/actions/workflows/release.yml)
 [![Docker Image](https://github.com/francesco-plt/send-to-kindle-telegram-bot/actions/workflows/docker-image.yml/badge.svg?branch=master)](https://github.com/francesco-plt/send-to-kindle-telegram-bot/actions/workflows/docker-image.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/francesco-plt/send-to-kindle-telegram-bot)](https://goreportcard.com/report/github.com/francesco-plt/send-to-kindle-telegram-bot)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/francesco-plt/send-to-kindle-telegram-bot)](https://github.com/francesco-plt/send-to-kindle-telegram-bot)
 [![License](https://img.shields.io/github/license/francesco-plt/send-to-kindle-telegram-bot)](LICENSE)
 
