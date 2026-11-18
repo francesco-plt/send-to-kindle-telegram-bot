@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,5 +58,47 @@ func TestHealthHandler(t *testing.T) {
 				t.Errorf("healthHandler() status = %d, want %d", rec.Code, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func TestRunHeartbeatPingsImmediately(t *testing.T) {
+	firstCall := make(chan struct{}, 1)
+
+	b := &SendToKindleBot{}
+	ping := func() error {
+		select {
+		case firstCall <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		b.runHeartbeat(ctx, ping)
+		close(done)
+	}()
+
+	// Block on the first ping (not a sleep): assert it fired without waiting
+	// for the 30s ticker and that lastPing was updated.
+	select {
+	case <-firstCall:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runHeartbeat() did not ping immediately")
+	}
+
+	if b.lastPing.Load() == 0 {
+		t.Fatal("runHeartbeat() did not record lastPing after the immediate ping")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runHeartbeat() did not return after context cancellation")
 	}
 }
