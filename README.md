@@ -14,7 +14,7 @@ Send to Kindle is a Telegram bot that delivers documents to your Kindle over TLS
 
 ## Features
 
-- **Document conversion** — formats Amazon can't read natively (e.g. `.mobi`, `.xlsx`) are converted to `.epub` with Calibre's `ebook-convert`; `.pdf`, `.doc`, `.docx`, `.rtf`, `.html`, and `.txt` are delivered as-is.
+- **Document conversion** — formats Amazon can't read natively (e.g. `.mobi`) are converted to `.epub` with Calibre's `ebook-convert`; `.pdf`, `.doc`, `.docx`, `.rtf`, `.html`, and `.txt` are delivered as-is.
 - **Kindle delivery** — emails the file (converted to `.epub` when needed) to your Kindle email address over TLS SMTP.
 - **Health endpoint** — optional `/healthz` HTTP endpoint for uptime monitoring.
 - **Containerized** — runs in Docker alongside Calibre, so `ebook-convert` is always available.
