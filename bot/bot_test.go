@@ -2,9 +2,12 @@ package bot
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -279,4 +282,27 @@ func TestRunConvertInjected(t *testing.T) {
 			t.Fatalf("runConvert() error = %v, want nil", err)
 		}
 	})
+}
+
+func TestDownloadURLTimeout(t *testing.T) {
+	canceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := downloadURL(ctx, srv.URL, filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatal("downloadURL() error = nil, want context deadline exceeded")
+	}
+
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not observe client cancellation")
+	}
 }

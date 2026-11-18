@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -87,7 +89,9 @@ func (b *SendToKindleBot) documentHandler(bot *tb.Bot) tb.HandlerFunc {
 		fileNameWithoutExtension, extension := splitFileName(doc.FileName)
 
 		originalFilePath := tmpFilesPath + doc.FileName
-		if err := downloadWithTimeout(bot, &doc.File, originalFilePath, 60*time.Second); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := b.downloadFile(ctx, bot, &doc.File, originalFilePath); err != nil {
 			slog.Error("could not download file", "error", err)
 			respond(bot, msg, "Sorry. I could not download file")
 			return nil
@@ -136,22 +140,44 @@ func respond(bot *tb.Bot, m *tb.Message, text string) {
 	}
 }
 
-// downloadWithTimeout downloads a file with a timeout, since telebot's
-// Bot.Download has no context variant. On timeout it best-effort removes the
-// partial file so nothing incomplete is left behind.
-func downloadWithTimeout(bot *tb.Bot, file *tb.File, localPath string, timeout time.Duration) error {
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- bot.Download(file, localPath)
-	}()
-
-	select {
-	case err := <-errCh:
+// downloadFile downloads a Telegram file with a cancellable request. It
+// mirrors telebot's Bot.File/Bot.Download, which issue an http.NewRequest
+// with no context and therefore cannot be cancelled by a wrapper goroutine.
+func (b *SendToKindleBot) downloadFile(ctx context.Context, bot *tb.Bot, file *tb.File, localPath string) error {
+	f, err := bot.FileByID(file.FileID)
+	if err != nil {
 		return err
-	case <-time.After(timeout):
-		_ = os.Remove(localPath)
-		return fmt.Errorf("download timed out after %s", timeout)
 	}
+	url := bot.URL + "/file/bot" + bot.Token + "/" + f.FilePath
+	file.FilePath = f.FilePath
+	return downloadURL(ctx, url, localPath)
+}
+
+// downloadURL fetches url into localPath using a context-aware request.
+func downloadURL(ctx context.Context, url, localPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telebot: expected status 200 but got %s", resp.Status)
+	}
+
+	out, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
 func (b *SendToKindleBot) runConvert(in, out string) error {
