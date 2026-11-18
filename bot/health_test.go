@@ -62,43 +62,29 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestRunHeartbeatPingsImmediately(t *testing.T) {
-	firstCall := make(chan struct{}, 1)
-
-	b := &SendToKindleBot{}
-	ping := func() error {
-		select {
-		case firstCall <- struct{}{}:
-		default:
-		}
-		return nil
-	}
-
+	var b SendToKindleBot
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	done := make(chan struct{})
 	go func() {
-		b.runHeartbeat(ctx, ping)
+		b.runHeartbeat(ctx, func() error { return nil })
 		close(done)
 	}()
 
-	// Block on the first ping (not a sleep): assert it fired without waiting
-	// for the 30s ticker and that lastPing was updated.
-	select {
-	case <-firstCall:
-	case <-time.After(5 * time.Second):
-		t.Fatal("runHeartbeat() did not ping immediately")
+	// The immediate ping must store lastPing without waiting for the 30s ticker.
+	deadline := time.Now().Add(2 * time.Second)
+	for b.lastPing.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
 	}
-
 	if b.lastPing.Load() == 0 {
-		t.Fatal("runHeartbeat() did not record lastPing after the immediate ping")
+		t.Fatal("lastPing was not set by the immediate ping")
 	}
 
 	cancel()
-
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("runHeartbeat() did not return after context cancellation")
+	case <-time.After(time.Second):
+		t.Fatal("runHeartbeat did not return after context cancel")
 	}
 }
