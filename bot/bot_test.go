@@ -287,6 +287,10 @@ func TestRunConvertInjected(t *testing.T) {
 func TestDownloadURLTimeout(t *testing.T) {
 	canceled := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Send a few bytes so the client has a partial file on disk when the
+		// timeout fires, then block until the client cancels the request.
+		_, _ = io.WriteString(w, "partial")
+		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 		close(canceled)
 	}))
@@ -295,9 +299,15 @@ func TestDownloadURLTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := downloadURL(ctx, srv.URL, filepath.Join(t.TempDir(), "out"))
+	out := filepath.Join(t.TempDir(), "out")
+	err := downloadURL(ctx, srv.URL, out)
 	if err == nil {
 		t.Fatal("downloadURL() error = nil, want context deadline exceeded")
+	}
+
+	// The partial file must be removed on failure.
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("downloadURL() left partial file on disk (stat err = %v), want it removed", statErr)
 	}
 
 	select {

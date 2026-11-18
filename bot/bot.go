@@ -174,9 +174,14 @@ func downloadURL(ctx context.Context, url, localPath string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
 
 	_, err = io.Copy(out, resp.Body)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(localPath)
+	}
 	return err
 }
 
